@@ -21,16 +21,29 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Cari folder proyek (yang berisi app.py dan core.py)
+      - name: Siapkan proyek (ekstrak file .zip otomatis bila perlu)
         shell: pwsh
         run: |
-          Write-Host "Isi repo:"
-          Get-ChildItem -Recurse -File | Where-Object { $_.FullName -notmatch '\\\.git\\' } | ForEach-Object { $_.FullName.Replace($env:GITHUB_WORKSPACE, '') }
-          $app = Get-ChildItem -Recurse -File -Filter app.py |
-            Where-Object { Test-Path (Join-Path $_.DirectoryName 'core.py') } |
-            Select-Object -First 1
+          $ws = $env:GITHUB_WORKSPACE
+          function Find-App {
+            Get-ChildItem -Path $ws -Recurse -File -Filter app.py |
+              Where-Object { Test-Path (Join-Path $_.DirectoryName 'core.py') } |
+              Select-Object -First 1
+          }
+          $app = Find-App
           if (-not $app) {
-            Write-Error "app.py dan core.py tidak ditemukan di repo. Pastikan semua file proyek ter-upload."
+            $zips = Get-ChildItem -Path $ws -Recurse -File -Filter *.zip
+            foreach ($z in $zips) {
+              $dest = Join-Path $ws ("_src_" + [IO.Path]::GetFileNameWithoutExtension($z.Name))
+              Write-Host "Mengekstrak $($z.Name) ke $dest"
+              Expand-Archive -Path $z.FullName -DestinationPath $dest -Force
+            }
+            $app = Find-App
+          }
+          if (-not $app) {
+            Write-Host "Isi repo:"
+            Get-ChildItem -Path $ws -Recurse -File | ForEach-Object { $_.FullName.Replace($ws, '') }
+            Write-Error "app.py dan core.py tidak ditemukan. Upload file PerataSuara-GitHub.zip ke repo."
             exit 1
           }
           Write-Host "Folder proyek: $($app.DirectoryName)"
@@ -53,7 +66,7 @@ jobs:
           pyinstaller @pyArgs
           if (-not (Test-Path "dist/PerataSuara.exe")) { Write-Error "Build gagal: PerataSuara.exe tidak terbentuk."; exit 1 }
 
-      - name: Siapkan paket rilis
+      - name: Siapkan paket hasil
         shell: pwsh
         run: |
           $rel = Join-Path $env:GITHUB_WORKSPACE "release/PerataSuara"
