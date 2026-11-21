@@ -20,29 +20,46 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
+
+      - name: Cari folder proyek (yang berisi app.py dan core.py)
+        shell: pwsh
+        run: |
+          Write-Host "Isi repo:"
+          Get-ChildItem -Recurse -File | Where-Object { $_.FullName -notmatch '\\\.git\\' } | ForEach-Object { $_.FullName.Replace($env:GITHUB_WORKSPACE, '') }
+          $app = Get-ChildItem -Recurse -File -Filter app.py |
+            Where-Object { Test-Path (Join-Path $_.DirectoryName 'core.py') } |
+            Select-Object -First 1
+          if (-not $app) {
+            Write-Error "app.py dan core.py tidak ditemukan di repo. Pastikan semua file proyek ter-upload."
+            exit 1
+          }
+          Write-Host "Folder proyek: $($app.DirectoryName)"
+          "PROJECT_DIR=$($app.DirectoryName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Pasang dependensi
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install imageio-ffmpeg Pillow pyinstaller
 
       - name: Build aplikasi .exe
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onefile --noconsole `
-            --name PerataSuara `
-            --icon assets/icon.ico `
-            --add-data "assets;assets" `
-            --collect-all imageio_ffmpeg `
-            app.py
+          Set-Location $env:PROJECT_DIR
+          $pyArgs = @("--noconfirm", "--clean", "--onefile", "--noconsole", "--name", "PerataSuara", "--collect-all", "imageio_ffmpeg")
+          if (Test-Path "assets/icon.ico") { $pyArgs += @("--icon", "assets/icon.ico") }
+          if (Test-Path "assets") { $pyArgs += @("--add-data", "assets;assets") }
+          $pyArgs += "app.py"
+          pyinstaller @pyArgs
+          if (-not (Test-Path "dist/PerataSuara.exe")) { Write-Error "Build gagal: PerataSuara.exe tidak terbentuk."; exit 1 }
 
       - name: Siapkan paket rilis
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path release/PerataSuara | Out-Null
-          Copy-Item dist/PerataSuara.exe release/PerataSuara/
-          Compress-Archive -Path release/PerataSuara -DestinationPath PerataSuara-Windows.zip -Force
+          $rel = Join-Path $env:GITHUB_WORKSPACE "release/PerataSuara"
+          New-Item -ItemType Directory -Force -Path $rel | Out-Null
+          Copy-Item (Join-Path $env:PROJECT_DIR "dist/PerataSuara.exe") $rel
+          Compress-Archive -Path $rel -DestinationPath (Join-Path $env:GITHUB_WORKSPACE "PerataSuara-Windows.zip") -Force
 
       - name: Unggah hasil build
         uses: actions/upload-artifact@v4
